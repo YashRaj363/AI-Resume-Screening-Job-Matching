@@ -1,0 +1,51 @@
+# Render Blueprint — defines all services for one-click deploy
+# https://render.com/docs/blueprint-spec
+
+services:
+  # ─── Node.js Backend API ───
+  - type: web
+    name: ai-resume-server
+    runtime: node
+    region: oregon
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: MONGO_URI
+        sync: false          # set manually in Render dashboard
+      - key: JWT_SECRET
+        sync: false
+      - key: ML_SERVICE_URL
+        sync: false          # paste your ml-service URL here
+      - key: CORS_ORIGIN
+        sync: false          # paste your client URL here
+      - key: MAX_FILE_SIZE_MB
+        value: "10"
+
+  # ─── Python ML Microservice ───
+  - type: web
+    name: ai-resume-ml
+    runtime: python
+    region: oregon
+    rootDir: ml-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+
+  # ─── React Frontend (Static Site) ───
+  - type: web
+    name: ai-resume-client
+    runtime: static
+    rootDir: client
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=0, must-revalidate
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        sync: false          # paste your server URL + /api here
