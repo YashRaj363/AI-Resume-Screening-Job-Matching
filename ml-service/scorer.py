@@ -1,28 +1,14 @@
 """
 Scoring Module
-Computes TF-IDF similarity, BERT semantic similarity, and final ATS score.
+Computes TF-IDF similarity, semantic similarity (lightweight), and final ATS score.
 """
 
 import logging
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
-
-# Load BERT model at module level for efficiency
-_model = None
-
-
-def _get_model():
-    """Lazy-load the sentence transformer model."""
-    global _model
-    if _model is None:
-        logger.info("Loading sentence-transformers model (first request may be slow)...")
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
-        logger.info("Model loaded successfully")
-    return _model
 
 
 def compute_tfidf_similarity(resume_text: str, jd_text: str) -> float:
@@ -55,7 +41,8 @@ def compute_tfidf_similarity(resume_text: str, jd_text: str) -> float:
 
 def compute_semantic_similarity(resume_text: str, jd_text: str) -> float:
     """
-    Compute BERT-based semantic similarity using sentence-transformers.
+    Compute semantic similarity using TF-IDF with word + character n-grams.
+    Lightweight alternative to BERT — runs under 512MB RAM.
 
     Args:
         resume_text: Resume text content
@@ -68,18 +55,34 @@ def compute_semantic_similarity(resume_text: str, jd_text: str) -> float:
         if not resume_text or not jd_text:
             return 0.0
 
-        model = _get_model()
-
-        # Truncate texts to avoid token limit issues
+        # Truncate texts to keep memory low
         max_chars = 5000
         resume_truncated = resume_text[:max_chars]
         jd_truncated = jd_text[:max_chars]
 
-        embeddings = model.encode([resume_truncated, jd_truncated])
-        similarity = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
+        # Word-level TF-IDF with bigrams for phrase-level matching
+        word_vectorizer = TfidfVectorizer(
+            stop_words="english",
+            ngram_range=(1, 2),
+            max_features=8000,
+        )
+        word_matrix = word_vectorizer.fit_transform([resume_truncated, jd_truncated])
+        word_sim = cosine_similarity(word_matrix[0:1], word_matrix[1:2])[0][0]
+
+        # Character-level TF-IDF to capture spelling/partial matches
+        char_vectorizer = TfidfVectorizer(
+            analyzer="char_wb",
+            ngram_range=(3, 5),
+            max_features=8000,
+        )
+        char_matrix = char_vectorizer.fit_transform([resume_truncated, jd_truncated])
+        char_sim = cosine_similarity(char_matrix[0:1], char_matrix[1:2])[0][0]
+
+        # Blend: 70% word n-grams + 30% char n-grams
+        similarity = 0.7 * word_sim + 0.3 * char_sim
 
         score = float(np.clip(similarity, 0.0, 1.0))
-        logger.info(f"Semantic similarity: {score:.4f}")
+        logger.info(f"Semantic similarity (lightweight): {score:.4f}")
         return score
 
     except Exception as e:
@@ -104,7 +107,7 @@ def compute_ats_score(
 
     Args:
         skill_match_pct: Percentage of matched skills (0-100)
-        semantic_score: BERT semantic similarity (0-1)
+        semantic_score: Semantic similarity (0-1)
         experience_match: Whether experience requirements are met
         education_match: Whether education requirements are met
 
